@@ -1,6 +1,5 @@
 provider "okta" {
-  org_name = "trial-4779724"
-  base_url = "okta.com"
+  org_name  = "trial-4779724.okta.com"
   api_token = var.api_token
 }
 resource "okta_user" "new_user" {
