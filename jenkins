@@ -1,39 +1,53 @@
-pipeline {
-  agent any
-
-  environment {
-    OKTA_API_TOKEN = credentials('OKTA_API_TOKEN')
-  }
-
-  stages {
-    stage('Checkout') {
-      steps {
-        git url: 'https://github.com/ranusharma/terraform.git', branch: 'main'
-      }
+node {
+    stage('Print Parameters') {
+        echo "Creating Okta user:"
+        echo "  First Name: ${params.USER_FIRST_NAME}"
+        echo "  Last Name:  ${params.USER_LAST_NAME}"
+        echo "  Email:      ${params.USER_EMAIL}"
+        echo "  Login:      ${params.USER_LOGIN}"
+        echo "  Group ID:   ${params.GROUP_ID}"
     }
 
-    stage('Terraform Init') {
-      steps {
-        sh 'terraform init'
-      }
+    stage('Create Okta User') {
+        withCredentials([string(credentialsId: 'okta_api_token', variable: 'OKTA_API_TOKEN')]) {
+            sh """
+                set -e
+                curl -s -X POST \\
+                  -H "Authorization: SSWS $OKTA_API_TOKEN" \\
+                  -H "Content-Type: application/json" \\
+                  -d '{
+                        "profile": {
+                          "firstName": "${params.USER_FIRST_NAME}",
+                          "lastName": "${params.USER_LAST_NAME}",
+                          "email": "${params.USER_EMAIL}",
+                          "login": "${params.USER_LOGIN}"
+                        },
+                        "credentials": {
+                          "password" : { "value": "TempPass123!" }
+                        }
+                      }' \\
+                  https://trial-4779724.okta.com/api/v1/users?activate=true \\
+                  -o user_response.json
+            """
+        }
     }
 
-    stage('Terraform fmt-chek') {
-    steps {
-        sh 'terraform fmt -check'
-      }
-    }
-    stage('Terraform Plan') {
-      steps {
-        sh 'terraform plan -var="api_token=$OKTA_API_TOKEN"'
-      }
+    stage('Extract User ID') {
+        script {
+            def userId = sh(script: "cat user_response.json | jq -r .id", returnStdout: true).trim()
+            env.CREATED_USER_ID = userId
+            echo "User ID: ${userId}"
+        }
     }
 
-    stage('Terraform Apply') {
-      steps {
-        input message: 'Apply changes?'
-        sh 'terraform apply -auto-approve -var="api_token=$OKTA_API_TOKEN"'
-      }
+    stage('Assign to Group') {
+        withCredentials([string(credentialsId: 'okta_api_token', variable: 'OKTA_API_TOKEN')]) {
+            sh """
+                curl -s -X PUT \\
+                  -H "Authorization: SSWS $OKTA_API_TOKEN" \\
+                  -H "Content-Type: application/json" \\
+                  https://yourOktaDomain.okta.com/api/v1/groups/${params.GROUP_ID}/users/${env.CREATED_USER_ID}
+            """
+        }
     }
-  }
 }
